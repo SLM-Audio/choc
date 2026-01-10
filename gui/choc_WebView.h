@@ -912,6 +912,7 @@ private:
 #elif CHOC_WINDOWS
 
 #include "../platform/choc_DynamicLibrary.h"
+#include <windowsx.h>
 
 // If you want to supply your own mechanism for finding the Microsoft
 // Webview2Loader.dll file, then define the CHOC_FIND_WEBVIEW2LOADER_DLL
@@ -1386,7 +1387,7 @@ struct WebView::Pimpl
         COMPtr<ExecuteScriptCompletedCallback> callback (ch ? new ExecuteScriptCompletedCallback (std::move (ch))
                                                             : nullptr);
         const auto execRes = coreWebView->ExecuteScript(createUTF16StringFromUTF8(script).c_str(), callback);
-        std::cout << "CALLBACK RES: " << execRes << "\n";
+        // std::cout << "CALLBACK RES: " << execRes << "\n";
         return execRes == S_OK;
     }
 
@@ -1398,9 +1399,26 @@ struct WebView::Pimpl
         return true;
     }
 
-    void tryHandleKeyEvent (choc::value::Value& json) {
-        std::string msgId;
-        if (msgId = json["msg"].getWithDefault<std::string>(""); msgId != "SKPFUI") {
+    void tryHandleScopedMouseMoveEvent(choc::value::Value& json) {
+        if (const auto msgId = json["msg"].getWithDefault<std::string>(""); msgId != "SCOPED_MOUSE_MOVE") {
+            return;
+        }
+        POINT cursorPos;
+        const auto isMouseUp = json["up"].get<bool>();
+        GetCursorPos (&cursorPos);
+        if (!isMouseUp) {
+            m_lastMouseDownPos = cursorPos;
+        }
+        else {
+            if (m_lastMouseDownPos) {
+                SetCursorPos(m_lastMouseDownPos->x, m_lastMouseDownPos->y);
+            }
+            m_lastMouseDownPos = {};
+        }
+    }
+
+    void tryHandleKeyEvent (choc::value::Value& json) const {
+        if (const auto msgId = json["msg"].getWithDefault<std::string>(""); msgId != "SKPFUI") {
             return;
         }
         if (json["keyCode"].get<std::uint32_t>() == VK_SPACE) {
@@ -1414,6 +1432,7 @@ private:
     HWNDHolder hwnd;
     std::string defaultURI, setHTMLURI;
     WebView::Options::Resource pageHTML;
+    std::optional<POINT> m_lastMouseDownPos{};
 
     //==============================================================================
     template <typename Type>
@@ -1459,8 +1478,15 @@ private:
         if (msg == WM_SHOWWINDOW)
             if (auto w = getPimpl (h); w->coreWebViewController != nullptr)
                 w->coreWebViewController->put_IsVisible (wp != 0);
-
         return DefWindowProcW (h, msg, wp, lp);
+    }
+
+    void cacheMousePos(std::optional<POINT> mousePos) {
+        m_lastMouseDownPos = mousePos;
+    }
+
+    std::optional<POINT> getLastMouseDownPos() const {
+        return m_lastMouseDownPos;
     }
 
     void resizeContentToFit()
@@ -1512,7 +1538,6 @@ private:
                     std::string MHSendMessageJs = "function MHSendMessage(m) { window.chrome.webview.postMessage(m); };";
                     coreWebView->AddScriptToExecuteOnDocumentCreated(createUTF16StringFromUTF8(MHSendMessageJs).c_str(), nullptr);
                     std::string keyListenerJs = "document.addEventListener('keydown', function(e) { console.log(e); MHSendMessage(\"{\\\"msg\\\": \\\"SKPFUI\\\", \\\"keyCode\\\":\" +  e.keyCode + \", \\\"utf8\\\": \\\"\" + e.key + \"\\\", \\\"S\\\": \" +  e.shiftKey + \", \\\"C\\\": \" +  e.ctrlKey + \", \\\"A\\\": \" +  e.altKey + \", \\\"isUp\\\": false}\"); });";
-                    // std::string keyListenerJs = "document.addEventListener('keydown', function(e) { console.log(e); })";
                     coreWebView->AddScriptToExecuteOnDocumentCreated(createUTF16StringFromUTF8(keyListenerJs).c_str(), nullptr);
 
                     if(options.initScript) {
@@ -1951,6 +1976,7 @@ inline void WebView::invokeBinding (const std::string& msg)
         const auto fn = json["fn"].getWithDefault<std::string>("");
         if (callbackID == 0 || fn.empty()) {
             pimpl->tryHandleKeyEvent(json);
+            pimpl->tryHandleScopedMouseMoveEvent(json);
             return;
         }
         auto b = bindings.find (fn);
