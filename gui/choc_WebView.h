@@ -1421,9 +1421,8 @@ struct WebView::Pimpl
         if (const auto msgId = json["msg"].getWithDefault<std::string>(""); msgId != "SKPFUI") {
             return;
         }
-        if (json["keyCode"].get<std::uint32_t>() == VK_SPACE) {
-            PostMessage(hwnd, WM_KEYDOWN, VK_SPACE, 0);
-        }
+        const auto iKeyCode = json["keyCode"].get<std::uint32_t>();
+        PostMessage(hwnd, WM_KEYDOWN, iKeyCode, 0);
     }
 
 private:
